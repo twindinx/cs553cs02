@@ -1,0 +1,10 @@
+gradio[oauth]
+torch
+torchvision
+transformers
+huggingface_hub
+accelerate
+einops
+timm
+pillow
+spaces
