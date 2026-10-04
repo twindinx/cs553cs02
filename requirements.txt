@@ -1,10 +1,7 @@
-gradio[oauth]
+gradio
 torch
 torchvision
 transformers
 huggingface_hub
 accelerate
-einops
-timm
 pillow
-spaces

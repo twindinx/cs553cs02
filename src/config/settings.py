@@ -1,13 +1,22 @@
+from pathlib import Path
+
 # declare AI model
 REMOTE_MODEL = "Qwen/Qwen3.8-27B"
-LOCAL_MODEL = "Thunderbolt215215/ArtiMuse"
+# change to small CPU-friendly VLM because ArtiMuse (15.9 GB) does not fit the VM
+LOCAL_MODEL = "HuggingFaceTB/SmolVLM-500M-Instruct"
 
 # Select model provider
 REMOTE_PROVIDER = "auto"
 
+# daily limits on remote model calls, our team's HF Token pays for them
+REMOTE_LIMIT_PER_IP = 20 # per visitor (IP address) per day
+REMOTE_LIMIT_TOTAL = 200 # for all visitors per day
+# keep the count outside repo folder so a redeploy won't reset them
+USAGE_DB_PATH = Path.home() / ".photo_critic" / "usage.db"
+
 # define max tokens
 REMOTE_MAX_TOKENS = 2048
-LOCAL_MAX_TOKENS = 512
+LOCAL_MAX_TOKENS = 160
 
 # both models have to output same markdown shape
 # so UI can us them identically
@@ -16,37 +25,26 @@ EVALUATION_HEADING = "How to improve"
 
 # Declare the aspects of the image to evaluate
 ASPECTS = [
-  "Overall Gestalt",
-  "Composition & Design",
-  "Visual Elements & Structure",
-  "Technical Execution",
-  "Originality & Creativity",
+    "Overall Gestalt",
+    "Composition & Design",
+    "Visual Elements & Structure",
+    "Technical Execution",
+    "Originality & Creativity",
 ]
 
-# ArtiMuse's scoring question
-# The model is trained to answer with a 2-letter code that maps onto 0-100
-ARTIMUSE_SCORE_QUESTION = """
-Rate the aesthetics score of the image in 0-100.
-In the output format, numbers are replaced by 2 corresponding letters, and the mapping relationship is:
-score 0 to 25: 0-aa, 1-ab, 2-ac, 3-ad, ... , 25-az,
-score 26 to 50: 26-ca, 27-cb, 28-cc, 29-cd, ..., 50-cy,
-score 51 to 75: 51-da, 52-db, 53-dc, 54-dd, ..., 75-dy,
-score 76 to 100: 76-ea, 77-eb, 78-ec, 79-ed, ..., 100-ey.
+# Small local model can't output expected result in 1 promp
+# so we ask it two simple questions and build the markdown ourselves
+LOCAL_SCORE_QUESTION = "Rate the aesthetic quality of this photo from 0 to 100. Answer with only the number."
 
-The answer only outputs 2 corresponding letters.
-"""
+def local_advice_question(aspect: str) -> str:
+    focus = f" in terms of {aspect}" if aspect else ""
+    return (f"Suggest three specific ways to improve this photo{focus}. "
+            "Answer as exactly three short bullet points, each under 15 words. Do not describe the photo.")
 
-# Ask for advice from ArtiMuse
-def advice_question(aspect: str) -> str:
-  focus = f" in terms of {aspect}" if aspect else ""
-  return f"""Suggest three specific ways to improve the aesthetic quality of this image{focus}.
-Answer as exactly three short bullet points, each naming one concrete change the artist should make.
-Do not describe what the image shows."""
-
-# Ask for advice from Qwen3
-def remote_prompt(aspect: str) -> str:
-  focus = f" in terms of {aspect}" if aspect else ""
-  return f"""Rate this image's aesthetic quality.
+# Ask remote model for score and advice in one reply
+def critique_prompt(aspect: str) -> str:
+    focus = f" in terms of {aspect}" if aspect else ""
+    return f"""Rate this image's aesthetic quality.
 Reply in exactly this format, once, and nothing else:
 
 ## Score: N / 100
