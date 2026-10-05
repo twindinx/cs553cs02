@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 
-# this script is to make sure our VM is protected
-# when professor resets VMs
-# it ensures our key ($OUR_KEY.pub) and every *.pub key in team_keys/
-# get access to VM
-#
+# this script is to make sure our VM is protected when professor resets VMs
+# it ensures our key ($OUR_KEY.pub) and every *.pub key in team_keys/ get access to VM
 # Usage:
 #   ./protect_vm.sh          lock the VM (or confirm it's locked)
 #   ./protect_vm.sh --check  only report which keys can log in

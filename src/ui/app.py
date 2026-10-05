@@ -2,6 +2,7 @@ import gradio as gr
 from src.config.settings import ASPECTS, REMOTE_MODEL, LOCAL_MODEL
 from src.utils.formatting import preview_upload
 from src.services.router import score_artwork
+from gradio.themes import Soft
 
 
 def clear_workspace():
@@ -141,4 +142,4 @@ with gr.Blocks(title="Photo Critique") as demo:
     demo.load()
 
 if __name__ == "__main__":
-    demo.launch(css=CSS, theme=gr.themes.Soft())
+    demo.launch(css=CSS, theme=Soft())

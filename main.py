@@ -1,7 +1,8 @@
 import logging
 import gradio as gr
+from gradio.themes import Soft
 from src.models.local_model import load_model
-from src.ui.app import demo
+from src.ui.app import demo, CSS
 
 
 if __name__ == "__main__":
@@ -11,4 +12,4 @@ if __name__ == "__main__":
     # the model then loads on the next local critique instead
     if gr.NO_RELOAD:
         load_model()
-    demo.launch()
+    demo.launch(css=CSS, theme=Soft())
