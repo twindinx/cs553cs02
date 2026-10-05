@@ -55,7 +55,7 @@ with gr.Blocks(title="Photo Critique") as demo:
         label="Aspect to critique",
         choices=ASPECTS,
         value=ASPECTS[0],
-        info="Select the aspect(s) of the image you want the model to give advice on."
+        info="Select the aspect of the image you want the model to give advice on."
         )
         temperature = gr.Slider(
         label="Creative freedom (temperature)",
