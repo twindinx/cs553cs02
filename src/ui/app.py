@@ -75,7 +75,7 @@ with gr.Blocks(title="Photo Critique") as demo:
         gr.Markdown(
         f"Remote model: {REMOTE_MODEL} - a general vision LLM. \n"
         "Remote model daily limit: 20 critiques per day.\n\n"
-        f"Local model: {LOCAL_MODEL} - a model trained specifically to score image aesthetics.",
+        f"Local model: {LOCAL_MODEL} - a small VLM model light enough to run in VM.",
         elem_id="model-note"
         )
 
