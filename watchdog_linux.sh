@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 
 # this script is to run from linux.wpi.edu to watch the VM
-# running the cron every minute and fix when VM goes wrong
+# running the cron every 5 minute and fix when VM goes wrong
 # the workflow:
 # 1) protect
-#     running the check to see if VM reachable
-#     if reachable then running protect_vm.sh --check
-#     if not locked down then run protect_vm.sh
-#     if locked down then all good
-# 2) check app
-#     check the app port
-#     if not work deploy the app running deploy_app.sh
+#     use our key(s) to get in and check the app port
+#     if our key(s) rejected (VM reset) or key changed, run protect_vm.sh
+#     if VM does not answer, check "VM down" or "linux machine offline"
+# 2) if the app is down, deploy the app with deploy_app.sh
 # 3) send alert via Discord
 
 set -uo pipefail
+# add nullglob to prevent error with team_keys
+shopt -s nullglob
 
 # declare config
 export PORT="${PORT:-22019}"
@@ -25,6 +24,9 @@ DEPLOY_GRACE="${DEPLOY_GRACE:-900}"
 DEPLOY_TIMEOUT="${DEPLOY_TIMEOUT:-1800}"
 STATE_DIR="${STATE_DIR:-$HOME/.cs553_watchdog}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TEAM_KEYS_DIR="${TEAM_KEYS_DIR:-$SCRIPT_DIR/team_keys}"
+NET_CHECK_URL="${NET_CHECK_URL:-https://github.com}"
+PROTECT_RETRY="${PROTECT_RETRY:-600}"
 SOURCE="linux"
 
 mkdir -p "$STATE_DIR"
@@ -42,13 +44,6 @@ get_webhook() {
   fi
   [ -z "$url" ] && [ -f "$STATE_DIR/discord_webhook" ] && url=$(cat "$STATE_DIR/discord_webhook")
   printf '%s' "$url"
-}
-
-# define function to check port
-port_open() {
-  perl -MIO::Socket::INET -e \
-    'exit(IO::Socket::INET->new(PeerAddr=>$ARGV[0], PeerPort=>$ARGV[1], Timeout=>5) ? 0 : 1)' \
-    "$1" "$2" 2>/dev/null
 }
 
 # notify function
@@ -77,48 +72,77 @@ vm() {
     "$VM_USER@$MACHINE" "$@"
 }
 
-# check VM
-"$SCRIPT_DIR/protect_vm.sh" --check
-case $? in
-  0) ;;
-  4)
-    set_status relocking "VM is not locked down; locking it down now"
-    if ! "$SCRIPT_DIR/protect_vm.sh"; then
-      set_status lockdown_failed "lockdown failed; check the watchdog log"
-      exit 1
-    fi
-    notify "lockdown done: only our keys get in again"
-    ;;
-  3) 
-    set_status takeover "can't log in with any key: someone takes over"
-    exit 1
-    ;;
-  2)
-    if port_open 130.215.41.1 53 || port_open 1.1.1.1 443; then
-        set_status down "VM is down - linux machine still works"
-    else 
-        set_status disconnect "linux machine disconnects to network"
-    fi
-    exit 1
-    ;;
-  *) set_status error "protect_vm.sh --check failed; check the watchdog log"; exit 1 ;;
-esac
+# run protect_vm.sh to lock down again
+# if it failed, wait PROTECT_RETRY (10min) before the next try
+relock() {
+  local now last
+  now=$(date +%s)
+  last=$(cat "$STATE_DIR/last_lockdown_fail" 2>/dev/null || echo 0)
+  if [ $((now - last)) -lt "$PROTECT_RETRY" ]; then
+    log "$1, but the last lockdown failed $((now - last))s ago; trying again after ${PROTECT_RETRY}s"
+    return 1
+  fi
+  set_status relocking "$1; running protect_vm.sh"
+  if ! "$SCRIPT_DIR/protect_vm.sh"; then
+    echo "$now" > "$STATE_DIR/last_lockdown_fail"
+    set_status lockdown_failed "lockdown failed; check the watchdog log"
+    return 1
+  fi
+  rm -f "$STATE_DIR/last_lockdown_fail"
+  notify "lockdown done: only our keys get in again"
+}
 
-# check the app if it still deployed
+# make sure there is 1 run at a time and cron does not start another
 if command -v flock >/dev/null; then
   exec 9>"$STATE_DIR/lock"
-  flock -n 9 || { log "previous run is still deploying; skipping the app check"; exit 0; }
+  flock -n 9 || { log "previous run is still running (deploying?); skipping this run"; exit 0; }
 fi
 
-# check if the port works
+# get our key(s)
+want=$(awk 'NF && $1 !~ /^#/ && !seen[$2]++' "$OUR_KEY.pub" "$TEAM_KEYS_DIR"/*.pub)
+want_sum=$(printf '%s\n' "$want" | sha256sum | cut -d' ' -f1)
+
+# check VM, keys and port
+err_file="$STATE_DIR/ssh.err"
+result=$(vm "bash -s -- $APP_PORTS" 2>"$err_file" <<'REMOTE'
+echo "keys=$(sha256sum < ~/.ssh/authorized_keys 2>/dev/null | cut -d' ' -f1)"
+for p in "$@"; do
+  if curl -sf -o /dev/null --max-time 10 "http://localhost:$p/"; then
+    echo "app_$p=up"
+  else
+    echo "app_$p=down"
+  fi
+done
+REMOTE
+)
+code=$?
+
+if [ "$code" -ne 0 ]; then
+  if grep -q "Permission denied" "$err_file"; then
+    # our key no longer works: the VM may be reset
+    relock "our key is rejected (VM reset?)" || exit 1
+    exit 0  # the next run checks the app with our key
+  fi
+  # no answer at all: check if VM down or linux machine offline
+  log "ssh failed (exit $code): $(tr '\n' ' ' < "$err_file")"
+  if curl -s -o /dev/null -m 10 "$NET_CHECK_URL"; then
+    set_status down "VM unreachable - linux machine still works"
+  else
+    set_status disconnect "linux machine lost its network; can't check the VM"
+  fi
+  exit 1
+fi
+
+# check if keys changed but our keys still work (someone adds in for example)
+if ! grep -qx "keys=$want_sum" <<< "$result"; then
+  relock "authorized_keys changed on the VM" || exit 1
+fi
+
+
+# check if the app port works
 down=""
 for p in $APP_PORTS; do
-  vm "curl -sf -o /dev/null --max-time 10 http://localhost:$p/" </dev/null
-  case $? in
-    0) ;;
-    255) log "lost the SSH connection during the app check; trying again next run"; exit 1 ;;
-    *) down="$down $p" ;;
-  esac
+  grep -qx "app_$p=up" <<< "$result" || down="$down $p"
 done
 
 if [ -z "$down" ]; then
